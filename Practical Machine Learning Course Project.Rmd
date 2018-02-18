@@ -1,0 +1,136 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Dave Rohrbaugh"
+date: "February 18, 2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, Cache = TRUE)
+```
+
+## Executive Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, to predict the manner in which the exercises were performed. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways:  
+
+1) Class A, exactly as the specification  
+2) Class B, throwing the elbows forward  
+3) Class C, lifting only halfway    
+4) Class D, lowering only halfway  
+5) Class E, throwing the hips forward  
+  
+More information is available from the website here:  
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+  
+## Loading and Cleaning the data
+To start, the first 7 columns from the training and the testing set are removed because they are non-measurement data. Once this is complete, any missing data and "#DIV/0!" are replaced with NAs.  
+```{r CleaningData, message = FALSE}
+library(caret); library(randomForest); library(e1071); set.seed(54321)
+training = read.csv("./data/pml-training.csv")
+testing = read.csv("./data/pml-testing.csv")
+NumRows <- dim(training)[1]
+NumVars <- dim(training)[2]
+training <- training[, c(8:NumVars)]
+testing <- testing[, c(8:NumVars)]
+
+training[training == "#DIV/0!"] <- NA
+training[training == ""] <- NA
+
+testing[testing == "#DIV/0!"] <- NA
+testing[testing == ""] <- NA
+```
+In order to reduce the number of variables, the percentage of NA values in each column (variable) was calculated. These percentages were plotted to determine a good cutoff for excluding a column. Looking at plot 1 in the appendix, a 90% cutoff looks good. So if a column is made up of 90% or more NAs, then that variable will be thrown out of each data set.  
+```{r PercNAs, fig.height = 3.5, fig.width = 4, fig.align = "center"}
+PercNAs <- vector(length = 0)
+for (ii in names(training)) {
+  PercNAs[ii] <- (sum(is.na(training[,ii])) / NumRows) * 100
+  if ( PercNAs[ii] > 90 ) {
+    training[,ii] <- NULL
+    testing[,ii]  <- NULL
+  }
+}
+```
+## Cross Validation  
+Cross validation was performed by subdividing the training set into another training and testing data set. The models will then be built on the new subdivided training set. The subdivided testing data set will be used to evaluate the models accuracy. The percentages of the subdivided data into the training and testing sets was 75% into training, 25% into testing.  
+```{r Cross-Validation}
+inTrain <- createDataPartition(training$classe, p = 0.75, list = FALSE)
+SubTraining <- training[inTrain,]
+SubTesting  <- training[-inTrain,]
+```
+## Exploratory Analysis
+After cleaning and variable reduction, the training set contains `r dim(training)[1]` observations and `r dim(training)[2] - 1` predictor variables. After cross-validation, the sub-training set had `r dim(SubTraining)[1]` observations while the sub-testing set had `r dim(SubTesting)[1]`
+The distribution of the outcome variable "classe" is shown below to get a feel for the data.
+```{r exploratory}
+summary(SubTraining$classe)
+```
+## Prediction models
+Using the sub-training data set, several models were built and evaluated. The model with the highest accuracy will be used to predict the 20 different test cases.  
+
+## Model 1 - Decision Tree
+```{r ModelDT}
+modCT <- train(classe ~ ., method="rpart", data = SubTraining)
+predCT <- predict(modCT,SubTesting)
+```
+## Model 2 - Random Forest
+```{r ModelRF}
+modRF <- randomForest(classe ~ ., data = SubTraining)
+predRF <- predict(modRF,SubTesting)
+```
+## Model 3 - Support Vector Machine, SVM
+```{r ModelSVM}
+modSVM <- svm(classe ~ ., data = SubTraining)
+predSVM <- predict(modSVM,SubTesting)
+```
+## Model 4 - Linear Discriminant Analysis, LDA
+```{r ModelLDA}
+modLDA <- train(classe ~ ., method = "lda", data = SubTraining, verbose = FALSE)
+predLDA <- predict(modLDA,SubTesting)
+```
+## Model Summary
+The accuracies as well as the upper and lower 95% confidence intervals of all of the models built and tested are shown below.
+```{r ModelSummary, echo = FALSE}
+df <- data.frame(c("Random Forest", "SVM", "LDA", "Classification Tree"),
+                 c(round(confusionMatrix(predRF, SubTesting$classe)$overall[1],4),
+                   round(confusionMatrix(predSVM, SubTesting$classe)$overall[1],4),
+                   round(confusionMatrix(predLDA, SubTesting$classe)$overall[1],4),
+                   round(confusionMatrix(predCT, SubTesting$classe)$overall[1],4)),
+                 c(round(confusionMatrix(predRF, SubTesting$classe)$overall[3],4),
+                   round(confusionMatrix(predSVM, SubTesting$classe)$overall[3],4),
+                   round(confusionMatrix(predLDA, SubTesting$classe)$overall[3],4),
+                   round(confusionMatrix(predCT, SubTesting$classe)$overall[3],4)),
+                 c(round(confusionMatrix(predRF, SubTesting$classe)$overall[4],4),
+                   round(confusionMatrix(predSVM, SubTesting$classe)$overall[4],4),
+                   round(confusionMatrix(predLDA, SubTesting$classe)$overall[4],4),
+                   round(confusionMatrix(predCT, SubTesting$classe)$overall[4],4))
+                 )
+colnames(df) <- c("Predictor","Accuracy","LCI","UCI")
+df
+```
+## Conclusion
+The final model that was chosen was the random forest model. It's accuracy of `r round(confusionMatrix(predRF, SubTesting$classe)$overall[1],4)`, (out of sample error of `r 1 - round(confusionMatrix(predRF, SubTesting$classe)$overall[1],4)`) was better than the decision tree, LDA, and SVM. The confusion matrix for the random forest model is shown below.
+```{r RFConfusionMatrix}
+confusionMatrix(predRF, SubTesting$classe)
+```
+## Test Case Prediction
+The random forest model was then used to predict the outcome from the 20 test cases that were loaded from the "pml-testing.csv" data file. The results of the predictions is shown below.
+```{r TestCase, include = TRUE}
+predRF20 <- predict(modRF, testing)
+predRF20
+```
+
+## Appendix
+```{r echo=FALSE}
+plot(PercNAs,
+     xlab = "Column Variable",
+     ylab = "% NAs in Variable Column",
+     pch = 16,
+     col = "red")
+```
+Plot 1, showing the percentage of NAs in each column of the data set.
+
+## References  
+1) http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har  
+2) Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
